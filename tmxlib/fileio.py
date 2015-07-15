@@ -491,41 +491,50 @@ class TMXSerializer(object):
 
         # XXX: Make this yet faster
         data = layer.data
-        data = struct.pack('<%sI' % len(data), *data)
 
         compression = getattr(layer, 'compression', 'zlib')
         encoding = getattr(layer, 'encoding', 'base64')
-        extra_attrib = {}
-        if compression:
-            extra_attrib['compression'] = compression
-        if encoding:
-            extra_attrib['encoding'] = encoding
 
-        if compression == 'gzip':
-            bytes_io = io.BytesIO()
-            if sys.version_info >= (2, 7):
-                kwargs = dict(mtime=getattr(layer, 'mtime', None))
-            else:  # pragma: no cover
-                kwargs = dict()
-            gzfile = gzip.GzipFile(fileobj=bytes_io, mode='wb', **kwargs)
-            gzfile.write(data)
-            gzfile.close()
-            data = bytes_io.getvalue()
-        elif compression == 'zlib':
-            data = zlib.compress(data)
-            extra_attrib['compression'] = 'zlib'
-        elif compression:
-            raise ValueError('Bad compression: %s', compression)
         if encoding == 'base64':
+            data = struct.pack('<%sI' % len(data), *data)
+            if compression == 'gzip':
+                bytes_io = io.BytesIO()
+                if sys.version_info >= (2, 7):
+                    kwargs = dict(mtime=getattr(layer, 'mtime', None))
+                else:  # pragma: no cover
+                    kwargs = dict()
+                gzfile = gzip.GzipFile(fileobj=bytes_io, mode='wb', **kwargs)
+                gzfile.write(data)
+                gzfile.close()
+                data = bytes_io.getvalue()
+            elif compression == 'zlib':
+                data = zlib.compress(data)
+            elif compression:
+                raise ValueError('Bad compression: %s', compression)
             data = base64.b64encode(data)
-            extra_attrib['encoding'] = 'base64'
+            if six.PY3:  # pragma: no cover
+                # etree only deals with (unicode) strings
+                data = data.decode('ascii')
+            data_elem = etree.Element('data', attrib={
+                    'encoding': 'base64', 'compression': compression})
+            data_elem.text = data
+        elif encoding == 'csv':
+            rows = []
+            for i in range(0, len(data), layer.map.width):
+                rows.append(data[i:i+layer.map.width])
+            for i in range(len(rows)):
+                rows[i] = ','.join(str(value) for value in rows[i])
+            data = '\n' + ',\n'.join(rows) + '\n'
+            data_elem = etree.Element('data', attrib={'encoding': 'csv'})
+            data_elem.text = data
+        elif encoding == 'xml':
+            data = list(etree.Element('tile', attrib={'gid': str(gid)})
+                for gid in data)
+            data_elem = etree.Element('data')
+            data_elem.extend(data)
         else:
             raise ValueError('Bad encoding: %s', encoding)
-        data_elem = etree.Element('data', attrib=extra_attrib)
-        if six.PY3:  # pragma: no cover
-            # etree only deals with (unicode) strings
-            data = data.decode('ascii')
-        data_elem.text = data
+
         element.append(data_elem)
         return element
 
